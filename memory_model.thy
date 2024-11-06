@@ -1,26 +1,60 @@
 section "Memory model for Smart Contract"
 
-theory memory_model imports "../IMP/Star" Comm begin
+theory memory_model
+  imports Main "Separation_Algebra.Separation_Algebra" "HOL-Library.Word" "HOL.String"
+begin
 
-datatype complexVal = IntVal int| StrVal string |NullVal| ListVal "complexVal list"| RecordVal "(string * complexVal) list"
-                      
-type_synonym newstate = "vname \<Rightarrow> complexVal"
+type_synonym length = nat
+type_synonym index = nat
 
-fun aval :: "aexp \<Rightarrow> newstate \<Rightarrow> complexVal" where
-"aval (N n) s = IntVal n"| 
-"aval (V x) s = s x" |
-"aval (Plus a\<^sub>1 a\<^sub>2) s = (case ( aval a\<^sub>1 s , aval a\<^sub>2 s) of 
-                      (IntVal n1, IntVal n2) \<Rightarrow> IntVal (n1+n2) | _ \<Rightarrow> NullVal)"
+datatype d_type = DChar |DShort| DInt
+datatype ('a) val =  BlockAddr 'a | IntVal int | StringVal string
 
-fun bval :: "bexp \<Rightarrow> newstate \<Rightarrow> bool" where
-"bval (Bc v) s = v" |
-"bval (Not b) s = (\<not> bval b s)" |
-"bval (And b\<^sub>1 b\<^sub>2) s = (bval b\<^sub>1 s \<and> bval b\<^sub>2 s)" |
-"bval (Less a\<^sub>1 a\<^sub>2) s = (case ( aval a\<^sub>1 s , aval a\<^sub>2 s) of 
-                      (IntVal n1, IntVal n2) \<Rightarrow>  ( n1 < n2) | _ \<Rightarrow> False)"
+datatype ('a,'r) op =  
+      ReadMemory 'a length | 
+      WriteToMemory 'a "'r list"|
+      ReadArray 'a index|
+      WriteToArray 'a index "'r list"|
+      ReadStruct 'a index|
+      WriteToStruct 'a index "('a) val"|
+      Skip
 
-fun updateState :: "newstate \<Rightarrow> vname list \<Rightarrow> int list \<Rightarrow> newstate " where
-"updateState s [][] = s"|
-"updateState s (p#pl)(i#il) = updateState (s(p:=IntVal i)) pl il"|
-"updateState s _ _ = s"
+record ('a)struct_heap_block =
+  st_size :: nat
+  st_val_map :: "index \<Rightarrow> ('a) val"
+
+record ('r) array_heap_block =
+  size :: nat
+  data_type :: d_type
+  val_map :: "index \<Rightarrow> 'r"
+                                                             
+(* 'm- mem type, 'a- element addr, 'r- value  *)
+locale memory_locale =   
+   fixes mem :: "'m::sep_algebra"
+   fixes read_from_mem :: "'m \<Rightarrow> 'a \<Rightarrow> 'r"
+   fixes write_to_mem :: "'m \<Rightarrow> 'a \<Rightarrow> 'r \<Rightarrow>'m"
+   fixes next_address :: "'a \<Rightarrow> 'a"
+   fixes get_heap_block :: "'m \<Rightarrow> 'a \<Rightarrow> ('r) array_heap_block"
+   fixes update_heap_block ::  "'m \<Rightarrow> 'a \<Rightarrow> ('r) array_heap_block \<Rightarrow>'m"
+   fixes get_struct_heap_block :: "'m \<Rightarrow> 'a \<Rightarrow> ('a) struct_heap_block"
+   fixes update_struct_heap_block ::  "'m \<Rightarrow> 'a \<Rightarrow> ('a) struct_heap_block \<Rightarrow>'m"
+begin
+
+inductive mem_access :: "'m * ('a,'r) op * 'r list \<Rightarrow> 'm * ('a,'r) op * 'r list\<Rightarrow> bool" (infix "\<rightarrow>" 55) where
+
+  read_step:  "\<lbrakk> n > 0; b = read_from_mem mem a \<rbrakk> \<Longrightarrow>
+               (mem, ReadMemory a n, r) \<rightarrow> (mem, ReadMemory (next_address a) (n-1), r @ [b])"|
+
+  write_step: "\<lbrakk> mem' = write_to_mem mem a v\<rbrakk> \<Longrightarrow>(mem, WriteToMemory a (v#vl), r) \<rightarrow> (mem', WriteToMemory (next_address a) vl, r)"|
+
+  read_array_step: "\<lbrakk>hb = get_heap_block mem a; idx < size hb; v = val_map hb idx \<rbrakk> \<Longrightarrow>
+                    (mem, ReadArray a idx, r)\<rightarrow> (mem, Skip, r@[v])"|
+
+  write_array_step: "\<lbrakk>hb = get_heap_block mem a; idx < size hb; hb' = hb\<lparr> val_map := (val_map hb)(idx := v)\<rparr>;
+                      mem' = update_heap_block mem a hb'\<rbrakk> \<Longrightarrow>
+                     (mem, WriteToArray a idx (v#vl), r)\<rightarrow> (mem', WriteToArray  (next_address a) (idx+1) vl, r)"
+  
 end
+
+end
+                 
